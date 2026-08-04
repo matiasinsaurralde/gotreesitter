@@ -1523,6 +1523,20 @@ func (a *nodeArena) allocNodeSliceInternal(n int, clearOut bool) []*Node {
 }
 
 func (a *nodeArena) allocFieldIDSlice(n int) []FieldID {
+	return a.allocFieldIDSliceInternal(n, true)
+}
+
+// allocFieldIDSliceNoClear returns an uncleared field-ID slice. The field slabs
+// are NEVER bulk-cleared on reset (resetFieldSlabs only rewinds `used`), so the
+// per-alloc clear is the only thing preventing a prior parse's field IDs from
+// leaking in. This variant is therefore safe ONLY when the caller overwrites all
+// n elements before any read (e.g. an immediate full copy). Mirrors
+// allocNodeSliceNoClear.
+func (a *nodeArena) allocFieldIDSliceNoClear(n int) []FieldID {
+	return a.allocFieldIDSliceInternal(n, false)
+}
+
+func (a *nodeArena) allocFieldIDSliceInternal(n int, clearOut bool) []FieldID {
 	if n <= 0 {
 		return nil
 	}
@@ -1557,12 +1571,26 @@ func (a *nodeArena) allocFieldIDSlice(n int) []FieldID {
 		// expression the append can silently overwrite the next parent's field
 		// IDs. Same defect class as allocNodeSlice.
 		out := slab.data[start:slab.used:slab.used]
-		clear(out)
+		if clearOut {
+			clear(out)
+		}
 		return out
 	}
 }
 
 func (a *nodeArena) allocFieldSourceSlice(n int) []uint8 {
+	return a.allocFieldSourceSliceInternal(n, true)
+}
+
+// allocFieldSourceSliceNoClear returns an uncleared field-source slice. As with
+// allocFieldIDSliceNoClear, field-source slabs are never bulk-cleared on reset,
+// so this is safe ONLY when the caller fully overwrites all n elements before
+// any read.
+func (a *nodeArena) allocFieldSourceSliceNoClear(n int) []uint8 {
+	return a.allocFieldSourceSliceInternal(n, false)
+}
+
+func (a *nodeArena) allocFieldSourceSliceInternal(n int, clearOut bool) []uint8 {
 	if n <= 0 {
 		return nil
 	}
@@ -1595,7 +1623,9 @@ func (a *nodeArena) allocFieldSourceSlice(n int) []uint8 {
 		a.fieldSourceSlabCursor = i
 		// Cap at len for the same reason as allocFieldIDSlice — see comment above.
 		out := slab.data[start:slab.used:slab.used]
-		clear(out)
+		if clearOut {
+			clear(out)
+		}
 		return out
 	}
 }

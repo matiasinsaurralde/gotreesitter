@@ -35,9 +35,9 @@ deferred by verification as a correctness-critical backtracking rewrite, not a m
 | **C1** | External scanners | `html/sql/d/cobol/blade/just` scanners | per-token lock + env-lock | **High** | 🛠️ |
 | **F1** | Incremental reuse | `incremental.go:562` | O(bytes×depth) recompare | **High** | ✅ |
 | **A1** | GSS merge | `glr.go:3376` | per-call map alloc (GB-scale) | **Med-High** | 🛠️ |
-| **B1** | Arena alloc | `arena.go:1560/1598` + reduce path | dead memclr / missing NoClear | **Med-High** | ✅ |
+| **B1** | Arena alloc | `arena.go:1560/1598` + reduce path | dead memclr / missing NoClear | **Med-High** | 🛠️ |
 | **E1** | Query match | `query_reader.go:84`, `query.go:877` | per-attempt heap alloc | **Med-High** | 🛠️ |
-| **C2** | Grammar cache | `embedded_loader.go:185` | global mutex, no fast path | **Med-High** | ✅ |
+| **C2** | Grammar cache | `embedded_loader.go:185` | global mutex, no fast path | **Med-High** | 🛠️ |
 | **F2** | Incremental reset | `incremental.go:104` | eager whole-buffer Equal | **Med-High** | ✅ |
 | **E2** | Query match | `query_matcher_generic.go:179` | clone-per-step captures | Med-High | 🔬 |
 | **A2** | GSS merge | `glr.go:3366/4171` | uncached reachability re-walk | Med | 🔬 |
@@ -53,7 +53,7 @@ deferred by verification as a correctness-critical backtracking rewrite, not a m
 | **D2** | grep match | `grep/match.go:183` | double text conversion | Med | 🔬 |
 | **D3** | grep where | `grep/where.go:100` | []byte→string per result | Med | 🔬 |
 | **A3** | Stack cull | `parser.go:8461` | O(keep×n) + O(m²) sorts | Med-Low | 🔬 |
-| **A6** | Reduce | `parser_reduce.go:7276` | value recomputed 3×/reduce | Low (0-risk) | ✅ |
+| **A6** | Reduce | `parser_reduce.go:7276` | value recomputed 3×/reduce | Low (0-risk) | 🛠️ |
 | **B4** | Arena reset | `arena.go:897` | 126 discrete stores/reset | Low-Med | 🔬 |
 | **A4** | GSS merge | `glr.go:4801` | linear slot scan | Low-Med | 🔬 |
 | **B5** | Arena acquire | `arena.go:506` | redundant slab re-walk | Low | 🔬 |

@@ -53,7 +53,7 @@ type embeddedLanguageCacheEntry struct {
 }
 
 var (
-	embeddedLanguageCacheMu sync.Mutex
+	embeddedLanguageCacheMu sync.RWMutex
 	embeddedLanguageCache   = map[string]*embeddedLanguageCacheEntry{}
 	embeddedLanguageLRU     list.List
 	embeddedLanguageLimit   = -1 // -1 = unlimited
@@ -183,12 +183,25 @@ func loadEmbeddedLanguageBase(blobName string) *gotreesitter.Language {
 }
 
 func getEmbeddedLanguageCacheEntry(blobName string) *embeddedLanguageCacheEntry {
+	// Fast path: a read lock for the overwhelmingly common "entry already
+	// present" case. This lookup runs on the tokenization hot path (hot external
+	// scanners re-fetch their Language per token) and, once a blob is decoded,
+	// the map entry never changes — so concurrent fetches should proceed in
+	// parallel rather than serialize on a full mutex. Only the rare first-insert
+	// takes the write lock (double-checked). This mirrors the lock-free-read
+	// treatment recordEmbeddedLanguageUse already has via embeddedLanguageEvictionActive.
+	embeddedLanguageCacheMu.RLock()
+	entry, ok := embeddedLanguageCache[blobName]
+	embeddedLanguageCacheMu.RUnlock()
+	if ok {
+		return entry
+	}
 	embeddedLanguageCacheMu.Lock()
 	defer embeddedLanguageCacheMu.Unlock()
 	if entry, ok := embeddedLanguageCache[blobName]; ok {
 		return entry
 	}
-	entry := &embeddedLanguageCacheEntry{blobName: blobName}
+	entry = &embeddedLanguageCacheEntry{blobName: blobName}
 	embeddedLanguageCache[blobName] = entry
 	return entry
 }

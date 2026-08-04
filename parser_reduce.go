@@ -6116,9 +6116,12 @@ func materializeReduceChildrenFromScratch(scratch *reduceBuildScratch, arena *no
 	if !scratch.trackFields {
 		return children, nil, nil
 	}
-	fieldIDs := arena.allocFieldIDSlice(len(scratch.fieldIDs))
+	// NoClear: the following copy() overwrites every element, so the allocator's
+	// memclr would be immediately discarded. (children above already uses NoClear
+	// for the same reason.)
+	fieldIDs := arena.allocFieldIDSliceNoClear(len(scratch.fieldIDs))
 	copy(fieldIDs, scratch.fieldIDs)
-	fieldSources := arena.allocFieldSourceSlice(len(scratch.fieldSources))
+	fieldSources := arena.allocFieldSourceSliceNoClear(len(scratch.fieldSources))
 	copy(fieldSources, scratch.fieldSources)
 	return children, fieldIDs, fieldSources
 }
@@ -7262,6 +7265,7 @@ func (p *Parser) applyReduceAction(source []byte, s *glrStack, act ParseAction, 
 		timing = p.reduceTiming
 	}
 	childCount := int(act.ChildCount)
+	pendingFullParents := p.usePendingFullParents() // hoisted: invariant within a reduce (mode flags); the GSS variant already hoists this
 	var (
 		window reduceRange
 		ok     bool
@@ -7273,7 +7277,7 @@ func (p *Parser) applyReduceAction(source []byte, s *glrStack, act ParseAction, 
 	if p != nil && p.noTreeBenchmarkOnly {
 		window, ok = computeReduceRangePayload(entries, childCount)
 	} else {
-		window, ok = computeReduceRangeForFullPayloads(entries, childCount, p != nil && p.usePendingFullParents())
+		window, ok = computeReduceRangeForFullPayloads(entries, childCount, pendingFullParents)
 	}
 	if timing != nil {
 		timing.reduceRangeNanos += time.Since(rangeStart).Nanoseconds()
@@ -7304,7 +7308,7 @@ func (p *Parser) applyReduceAction(source []byte, s *glrStack, act ParseAction, 
 		*anyReduced = true
 		return
 	}
-	if p.usePendingFullParents() {
+	if pendingFullParents {
 		if child, ok := p.collapsibleRawUnarySelfReductionEntry(act, tok, arena, entries, window.start, window.reducedEnd); ok {
 			if !s.truncateBeforePush(window.start) {
 				s.dead = true
@@ -7316,7 +7320,7 @@ func (p *Parser) applyReduceAction(source []byte, s *glrStack, act ParseAction, 
 			return
 		}
 	}
-	if p.usePendingFullParents() {
+	if pendingFullParents {
 		pendingStart := time.Time{}
 		if timing != nil {
 			pendingStart = time.Now()
@@ -7450,6 +7454,7 @@ func (p *Parser) applyReduceActionTransientParents(source []byte, s *glrStack, a
 		timing = p.reduceTiming
 	}
 	childCount := int(act.ChildCount)
+	pendingFullParents := p.usePendingFullParents() // hoisted: invariant within a reduce (mode flags); the GSS variant already hoists this
 	var (
 		window reduceRange
 		ok     bool
@@ -7461,7 +7466,7 @@ func (p *Parser) applyReduceActionTransientParents(source []byte, s *glrStack, a
 	if p != nil && p.noTreeBenchmarkOnly {
 		window, ok = computeReduceRangePayload(entries, childCount)
 	} else {
-		window, ok = computeReduceRangeForFullPayloads(entries, childCount, p != nil && p.usePendingFullParents())
+		window, ok = computeReduceRangeForFullPayloads(entries, childCount, pendingFullParents)
 	}
 	if timing != nil {
 		timing.reduceRangeNanos += time.Since(rangeStart).Nanoseconds()
@@ -7491,7 +7496,7 @@ func (p *Parser) applyReduceActionTransientParents(source []byte, s *glrStack, a
 		*anyReduced = true
 		return
 	}
-	if p.usePendingFullParents() {
+	if pendingFullParents {
 		if child, ok := p.collapsibleRawUnarySelfReductionEntry(act, tok, arena, entries, window.start, window.reducedEnd); ok {
 			if !s.truncateBeforePush(window.start) {
 				s.dead = true
@@ -7503,7 +7508,7 @@ func (p *Parser) applyReduceActionTransientParents(source []byte, s *glrStack, a
 			return
 		}
 	}
-	if p.usePendingFullParents() {
+	if pendingFullParents {
 		pendingStart := time.Time{}
 		if timing != nil {
 			pendingStart = time.Now()

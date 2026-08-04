@@ -11,7 +11,8 @@ func cloneNodeSliceInArena(arena *nodeArena, nodes []*Node) []*Node {
 		return nil
 	}
 	if arena != nil {
-		buf := arena.allocNodeSlice(len(nodes))
+		// NoClear: the copy() fully overwrites all len(nodes) elements.
+		buf := arena.allocNodeSliceNoClear(len(nodes))
 		copy(buf, nodes)
 		return buf
 	}
@@ -257,7 +258,7 @@ func (v resultMutableChildView) ReplaceFinalRefRangeWithNode(start, end int, rep
 		fieldIDs = append(fieldIDs, mergedField)
 		fieldIDs = append(fieldIDs, parentFieldIDs[end:]...)
 		if v.parent.ownerArena != nil {
-			buf := v.parent.ownerArena.allocFieldIDSlice(len(fieldIDs))
+			buf := v.parent.ownerArena.allocFieldIDSliceNoClear(len(fieldIDs))
 			copy(buf, fieldIDs)
 			fieldIDs = buf
 		}
@@ -277,7 +278,7 @@ func (v resultMutableChildView) ReplaceFinalRefRangeWithNode(start, end int, rep
 		fieldSources = append(fieldSources, mergedSource)
 		fieldSources = append(fieldSources, parentFieldSources[end:]...)
 		if v.parent.ownerArena != nil {
-			buf := v.parent.ownerArena.allocFieldSourceSlice(len(fieldSources))
+			buf := v.parent.ownerArena.allocFieldSourceSliceNoClear(len(fieldSources))
 			copy(buf, fieldSources)
 			fieldSources = buf
 		}
@@ -324,7 +325,7 @@ func (v resultMutableChildView) AppendFinalRefNode(child *Node) bool {
 		fieldIDs = append(fieldIDs, parentFieldIDs...)
 		fieldIDs = append(fieldIDs, 0)
 		if v.parent.ownerArena != nil {
-			buf := v.parent.ownerArena.allocFieldIDSlice(len(fieldIDs))
+			buf := v.parent.ownerArena.allocFieldIDSliceNoClear(len(fieldIDs))
 			copy(buf, fieldIDs)
 			fieldIDs = buf
 		}
@@ -336,7 +337,7 @@ func (v resultMutableChildView) AppendFinalRefNode(child *Node) bool {
 		fieldSources = append(fieldSources, parentFieldSources...)
 		fieldSources = append(fieldSources, uint8(fieldSourceNone))
 		if v.parent.ownerArena != nil {
-			buf := v.parent.ownerArena.allocFieldSourceSlice(len(fieldSources))
+			buf := v.parent.ownerArena.allocFieldSourceSliceNoClear(len(fieldSources))
 			copy(buf, fieldSources)
 			fieldSources = buf
 		}
@@ -426,7 +427,7 @@ func (v resultMutableChildView) SurroundFinalRefs(prefix, suffix []*Node) bool {
 		fieldIDs := make([]FieldID, newLen)
 		copy(fieldIDs[leadingCount:], parentFieldIDs)
 		if v.parent.ownerArena != nil {
-			buf := v.parent.ownerArena.allocFieldIDSlice(len(fieldIDs))
+			buf := v.parent.ownerArena.allocFieldIDSliceNoClear(len(fieldIDs))
 			copy(buf, fieldIDs)
 			fieldIDs = buf
 		}
@@ -437,7 +438,7 @@ func (v resultMutableChildView) SurroundFinalRefs(prefix, suffix []*Node) bool {
 		fieldSources := make([]uint8, newLen)
 		copy(fieldSources[leadingCount:], parentFieldSources)
 		if v.parent.ownerArena != nil {
-			buf := v.parent.ownerArena.allocFieldSourceSlice(len(fieldSources))
+			buf := v.parent.ownerArena.allocFieldSourceSliceNoClear(len(fieldSources))
 			copy(buf, fieldSources)
 			fieldSources = buf
 		}
@@ -532,7 +533,8 @@ func cloneFieldIDSliceInArena(arena *nodeArena, fieldIDs []FieldID) []FieldID {
 		return nil
 	}
 	if arena != nil {
-		out := arena.allocFieldIDSlice(len(fieldIDs))
+		// NoClear: the copy() fully overwrites all len(fieldIDs) elements.
+		out := arena.allocFieldIDSliceNoClear(len(fieldIDs))
 		copy(out, fieldIDs)
 		return out
 	}
