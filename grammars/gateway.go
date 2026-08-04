@@ -212,9 +212,22 @@ func DefaultPolicy() ParsePolicy {
 func WalkAndParse(ctx context.Context, root string, policy ParsePolicy) (<-chan ParsedFile, func() WalkStats) {
 	ch := make(chan ParsedFile, policy.ChannelBuffer)
 
+	// Stat counters are accumulated lock-free via atomics (independent additive
+	// counters, exactly like bytesTotal already was) and assembled into the
+	// returned WalkStats once, after wg.Wait(), by the producer goroutine. The
+	// prior single sync.Mutex serialized the producer and every worker 2-3x per
+	// file for plain integer increments; on large repos of small files that is
+	// pure removable contention.
 	var stats WalkStats
-	var mu sync.Mutex
-	var bytesTotal int64
+	var (
+		cFilesFound    atomic.Int64
+		cFilesParsed   atomic.Int64
+		cFilesFailed   atomic.Int64
+		cFilesFiltered atomic.Int64
+		cLargeFiles    atomic.Int64
+		cBinarySkipped atomic.Int64
+		bytesTotal     atomic.Int64
+	)
 
 	sem := make(chan struct{}, policy.MaxConcurrent)
 	var wg sync.WaitGroup
@@ -266,9 +279,7 @@ func WalkAndParse(ctx context.Context, root string, policy ParsePolicy) (<-chan 
 			name := d.Name()
 			for _, ext := range policy.SkipExtensions {
 				if strings.HasSuffix(name, ext) {
-					mu.Lock()
-					stats.FilesFiltered++
-					mu.Unlock()
+					cFilesFiltered.Add(1)
 					return nil
 				}
 			}
@@ -288,25 +299,19 @@ func WalkAndParse(ctx context.Context, root string, policy ParsePolicy) (<-chan 
 			}
 			fileSize := info.Size()
 
-			mu.Lock()
-			stats.FilesFound++
-			mu.Unlock()
+			cFilesFound.Add(1)
 
 			// ShouldParse hook.
 			if policy.ShouldParse != nil {
 				if !policy.ShouldParse(p, fileSize, info.ModTime()) {
-					mu.Lock()
-					stats.FilesFiltered++
-					mu.Unlock()
+					cFilesFiltered.Add(1)
 					return nil
 				}
 			}
 
 			// Binary file detection: check first 8 KB for NUL bytes.
 			if bin, _ := checkBinaryFile(p); bin {
-				mu.Lock()
-				stats.BinarySkipped++
-				mu.Unlock()
+				cBinarySkipped.Add(1)
 				return nil
 			}
 
@@ -321,9 +326,7 @@ func WalkAndParse(ctx context.Context, root string, policy ParsePolicy) (<-chan 
 			isLarge := fileSize >= policy.LargeFileThreshold
 
 			if isLarge {
-				mu.Lock()
-				stats.LargeFiles++
-				mu.Unlock()
+				cLargeFiles.Add(1)
 
 				progress(ProgressEvent{
 					Phase:   "large_file",
@@ -348,14 +351,10 @@ func WalkAndParse(ctx context.Context, root string, policy ParsePolicy) (<-chan 
 					pf = parseOne(p, lang, fileSize)
 				}
 				if pf.Err != nil {
-					mu.Lock()
-					stats.FilesFailed++
-					mu.Unlock()
+					cFilesFailed.Add(1)
 				} else {
-					mu.Lock()
-					stats.FilesParsed++
-					mu.Unlock()
-					atomic.AddInt64(&bytesTotal, fileSize)
+					cFilesParsed.Add(1)
+					bytesTotal.Add(fileSize)
 				}
 
 				progress(ProgressEvent{
@@ -399,14 +398,10 @@ func WalkAndParse(ctx context.Context, root string, policy ParsePolicy) (<-chan 
 						pf = parseOne(filePath, entry, size)
 					}
 					if pf.Err != nil {
-						mu.Lock()
-						stats.FilesFailed++
-						mu.Unlock()
+						cFilesFailed.Add(1)
 					} else {
-						mu.Lock()
-						stats.FilesParsed++
-						mu.Unlock()
-						atomic.AddInt64(&bytesTotal, size)
+						cFilesParsed.Add(1)
+						bytesTotal.Add(size)
 					}
 
 					// Send BEFORE releasing semaphore (critical for backpressure).
@@ -425,17 +420,24 @@ func WalkAndParse(ctx context.Context, root string, policy ParsePolicy) (<-chan 
 		})
 		wg.Wait()
 
-		mu.Lock()
-		stats.BytesParsed = atomic.LoadInt64(&bytesTotal)
-		mu.Unlock()
+		// All workers have completed (wg.Wait above); assemble the result once.
+		// close(done) (deferred) happens-after this write, and statsFn's <-done
+		// synchronizes-with it, so no lock is needed here or there.
+		stats = WalkStats{
+			FilesFound:    int(cFilesFound.Load()),
+			FilesParsed:   int(cFilesParsed.Load()),
+			FilesFailed:   int(cFilesFailed.Load()),
+			FilesFiltered: int(cFilesFiltered.Load()),
+			LargeFiles:    int(cLargeFiles.Load()),
+			BinarySkipped: int(cBinarySkipped.Load()),
+			BytesParsed:   bytesTotal.Load(),
+		}
 
 		progress(ProgressEvent{Phase: "done"})
 	}()
 
 	statsFn := func() WalkStats {
-		<-done
-		mu.Lock()
-		defer mu.Unlock()
+		<-done // happens-after the producer's single assembly of stats above
 		return stats
 	}
 

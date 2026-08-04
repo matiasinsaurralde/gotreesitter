@@ -16,7 +16,14 @@ de-allocated in one function but not its neighbour, a value hoisted in the GSS r
 recomputed in the non-GSS one. The fixes are therefore mostly mechanical: **restore the
 established in-tree pattern to the site that was missed.**
 
-Status legend: 🔬 candidate · ✅ verified (analysis) · 🛠️ fix applied & builds · ❌ rejected
+Status legend: 🔬 candidate · ✅ verified (analysis) · 🛠️ fix applied, builds & targeted tests pass · ❌ rejected
+
+**Applied so far (branch `claude/hello-iufgo8`), each adversarially verified then built + targeted-tested:**
+D1 (JSON zero-copy), C1 (html/sql/d scanner lang cache — *scoped down* from 6 to 3 after
+verification found cobol/blade/just already cache), C3 (WalkAndParse atomics), A1 (GSS merge map
+reuse), E1 (query budget reuse). Adversarial verification notably **corrected** two findings:
+C1's scope (6→3 scanners) and E1's reset (must clear `trip` as well as `remaining`). E2 was
+deferred by verification as a correctness-critical backtracking rewrite, not a mechanical swap.
 
 ---
 
@@ -24,18 +31,18 @@ Status legend: 🔬 candidate · ✅ verified (analysis) · 🛠️ fix applied 
 
 | # | Area | Location | Category | Impact | Status |
 |---|------|----------|----------|--------|--------|
-| **D1** | JSON lexer | `grammars/json_lexer.go` ×8 | zero-copy conversion | **High** | ✅ |
-| **C1** | External scanners | `html/sql/d/cobol/blade/just` scanners | per-token lock + env-lock | **High** | ✅ |
+| **D1** | JSON lexer | `grammars/json_lexer.go` ×8 | zero-copy conversion | **High** | 🛠️ |
+| **C1** | External scanners | `html/sql/d/cobol/blade/just` scanners | per-token lock + env-lock | **High** | 🛠️ |
 | **F1** | Incremental reuse | `incremental.go:562` | O(bytes×depth) recompare | **High** | ✅ |
-| **A1** | GSS merge | `glr.go:3376` | per-call map alloc (GB-scale) | **Med-High** | ✅ |
+| **A1** | GSS merge | `glr.go:3376` | per-call map alloc (GB-scale) | **Med-High** | 🛠️ |
 | **B1** | Arena alloc | `arena.go:1560/1598` + reduce path | dead memclr / missing NoClear | **Med-High** | ✅ |
-| **E1** | Query match | `query_reader.go:84`, `query.go:877` | per-attempt heap alloc | **Med-High** | ✅ |
+| **E1** | Query match | `query_reader.go:84`, `query.go:877` | per-attempt heap alloc | **Med-High** | 🛠️ |
 | **C2** | Grammar cache | `embedded_loader.go:185` | global mutex, no fast path | **Med-High** | ✅ |
 | **F2** | Incremental reset | `incremental.go:104` | eager whole-buffer Equal | **Med-High** | ✅ |
 | **E2** | Query match | `query_matcher_generic.go:179` | clone-per-step captures | Med-High | 🔬 |
 | **A2** | GSS merge | `glr.go:3366/4171` | uncached reachability re-walk | Med | 🔬 |
 | **B3=C4** | Arena pool | `arena.go:313` | pool-size cliff under concurrency | Med | ✅ (2 agents) |
-| **C3** | Batch parse | `grammars/gateway.go:216` | mutex where atomics suffice | Med | ✅ |
+| **C3** | Batch parse | `grammars/gateway.go:216` | mutex where atomics suffice | Med | 🛠️ |
 | **B2** | Reduce scratch | `parser_reduce.go:5927` | per-reduce clear only GC-useful | Med | 🔬 |
 | **F3** | DFA lexer | `parser_dfa_token_source.go:4506` | contextual-keyword re-scan | Med | 🔬 |
 | **F4** | External scan | `parser_dfa_token_source.go:3672` | winning-ELS scanned twice | Med | 🔬 |

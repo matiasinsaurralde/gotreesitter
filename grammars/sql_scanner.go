@@ -2,7 +2,25 @@
 
 package grammars
 
-import gotreesitter "github.com/odvcencio/gotreesitter"
+import (
+	"sync"
+
+	gotreesitter "github.com/odvcencio/gotreesitter"
+)
+
+// sqlLangCached caches the SQL *Language for the process lifetime; Scan runs
+// per external token and previously re-fetched it (a global-mutex cache lookup)
+// on every token just to index the immutable ExternalSymbols table. Mirrors the
+// scss/yaml scanner fix.
+var (
+	sqlLangOnce   sync.Once
+	sqlLangCached *gotreesitter.Language
+)
+
+func sqlCachedLang() *gotreesitter.Language {
+	sqlLangOnce.Do(func() { sqlLangCached = SqlLanguage() })
+	return sqlLangCached
+}
 
 // External token indexes for the SQL grammar (DerekStride/tree-sitter-sql).
 const (
@@ -87,7 +105,7 @@ func (SqlExternalScanner) PreservesStateOnScanFailure() bool { return true }
 
 func (SqlExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer, validSymbols []bool) bool {
 	s := payload.(*sqlScannerState)
-	lang := SqlLanguage()
+	lang := sqlCachedLang()
 	tagStartSym := lang.ExternalSymbols[sqlTokDollarTagStart]
 	contentSym := lang.ExternalSymbols[sqlTokContent]
 	tagEndSym := lang.ExternalSymbols[sqlTokDollarTagEnd]

@@ -311,7 +311,7 @@ func (ts *JSONTokenSource) clipStringContentToken(tok gotreesitter.Token, target
 	}
 	tok.StartByte = uint32(target)
 	tok.StartPoint = advanceJSONPoint(tok.StartPoint, ts.src[start:target])
-	tok.Text = string(ts.src[target:end])
+	tok.Text = bytesToStringNoCopy(ts.src[target:end])
 	return tok
 }
 
@@ -336,7 +336,7 @@ func (ts *JSONTokenSource) singleByteToken(sym gotreesitter.Symbol) gotreesitter
 	endPoint := gotreesitter.Point{Row: ts.row, Column: ts.col}
 	return gotreesitter.Token{
 		Symbol:     sym,
-		Text:       string(ts.src[startOffset:ts.offset]),
+		Text:       bytesToStringNoCopy(ts.src[startOffset:ts.offset]),
 		StartByte:  uint32(startOffset),
 		EndByte:    uint32(ts.offset),
 		StartPoint: startPoint,
@@ -352,7 +352,7 @@ func (ts *JSONTokenSource) stringTokens() gotreesitter.Token {
 	openEnd := gotreesitter.Point{Row: ts.row, Column: ts.col}
 	openTok := gotreesitter.Token{
 		Symbol:     ts.quoteSymbol,
-		Text:       string(ts.src[openStartOffset:ts.offset]),
+		Text:       bytesToStringNoCopy(ts.src[openStartOffset:ts.offset]),
 		StartByte:  uint32(openStartOffset),
 		EndByte:    uint32(ts.offset),
 		StartPoint: openStart,
@@ -369,7 +369,7 @@ func (ts *JSONTokenSource) stringTokens() gotreesitter.Token {
 			if segStartOffset < ts.offset {
 				ts.pending = append(ts.pending, gotreesitter.Token{
 					Symbol:     ts.stringContentSymbol,
-					Text:       string(ts.src[segStartOffset:ts.offset]),
+					Text:       bytesToStringNoCopy(ts.src[segStartOffset:ts.offset]),
 					StartByte:  uint32(segStartOffset),
 					EndByte:    uint32(ts.offset),
 					StartPoint: segStartPoint,
@@ -382,7 +382,7 @@ func (ts *JSONTokenSource) stringTokens() gotreesitter.Token {
 			closeEnd := gotreesitter.Point{Row: ts.row, Column: ts.col}
 			ts.pending = append(ts.pending, gotreesitter.Token{
 				Symbol:     ts.quoteSymbol,
-				Text:       string(ts.src[closeStartOffset:ts.offset]),
+				Text:       bytesToStringNoCopy(ts.src[closeStartOffset:ts.offset]),
 				StartByte:  uint32(closeStartOffset),
 				EndByte:    uint32(ts.offset),
 				StartPoint: closeStart,
@@ -394,7 +394,7 @@ func (ts *JSONTokenSource) stringTokens() gotreesitter.Token {
 			if segStartOffset < ts.offset {
 				ts.pending = append(ts.pending, gotreesitter.Token{
 					Symbol:     ts.stringContentSymbol,
-					Text:       string(ts.src[segStartOffset:ts.offset]),
+					Text:       bytesToStringNoCopy(ts.src[segStartOffset:ts.offset]),
 					StartByte:  uint32(segStartOffset),
 					EndByte:    uint32(ts.offset),
 					StartPoint: segStartPoint,
@@ -419,7 +419,7 @@ func (ts *JSONTokenSource) stringTokens() gotreesitter.Token {
 			}
 			ts.pending = append(ts.pending, gotreesitter.Token{
 				Symbol:     ts.escapeSymbol,
-				Text:       string(ts.src[escStartOffset:ts.offset]),
+				Text:       bytesToStringNoCopy(ts.src[escStartOffset:ts.offset]),
 				StartByte:  uint32(escStartOffset),
 				EndByte:    uint32(ts.offset),
 				StartPoint: escStart,
@@ -437,7 +437,7 @@ func (ts *JSONTokenSource) stringTokens() gotreesitter.Token {
 	if segStartOffset < ts.offset {
 		ts.pending = append(ts.pending, gotreesitter.Token{
 			Symbol:     ts.stringContentSymbol,
-			Text:       string(ts.src[segStartOffset:ts.offset]),
+			Text:       bytesToStringNoCopy(ts.src[segStartOffset:ts.offset]),
 			StartByte:  uint32(segStartOffset),
 			EndByte:    uint32(ts.offset),
 			StartPoint: segStartPoint,
@@ -503,7 +503,7 @@ func (ts *JSONTokenSource) numberToken() (gotreesitter.Token, bool) {
 	endPoint := gotreesitter.Point{Row: ts.row, Column: ts.col}
 	return gotreesitter.Token{
 		Symbol:     ts.numberSymbol,
-		Text:       string(ts.src[startOffset:ts.offset]),
+		Text:       bytesToStringNoCopy(ts.src[startOffset:ts.offset]),
 		StartByte:  uint32(startOffset),
 		EndByte:    uint32(ts.offset),
 		StartPoint: startPoint,
@@ -580,7 +580,7 @@ func (ts *JSONTokenSource) commentToken() (gotreesitter.Token, bool) {
 
 	return gotreesitter.Token{
 		Symbol:     ts.commentSymbol,
-		Text:       string(ts.src[startOffset:ts.offset]),
+		Text:       bytesToStringNoCopy(ts.src[startOffset:ts.offset]),
 		StartByte:  uint32(startOffset),
 		EndByte:    uint32(ts.offset),
 		StartPoint: startPoint,

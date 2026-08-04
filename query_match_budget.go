@@ -22,6 +22,27 @@ func newQueryMatchBudget(limit int) *queryMatchBudget {
 	return &queryMatchBudget{remaining: limit}
 }
 
+// resetQueryMatchBudget reuses b for a fresh (pattern,node) attempt instead of
+// allocating a new *queryMatchBudget each time. It mirrors newQueryMatchBudget:
+// nil (unbounded) when limit <= 0, otherwise remaining=limit with trip cleared,
+// reusing b's storage when b != nil. Callers MUST assign the result back (it may
+// return nil). Both mutable fields (remaining AND trip) are restored — carrying
+// a stale trip=true into the next attempt would cut enumeration short and
+// falsely report DidExceedMatchLimit. Safe because match attempts run strictly
+// sequentially on a single QueryCursor / reader invocation (never nested or
+// concurrent on the same budget); nested sub-searches allocate their own.
+func resetQueryMatchBudget(b *queryMatchBudget, limit int) *queryMatchBudget {
+	if limit <= 0 {
+		return nil
+	}
+	if b == nil {
+		return &queryMatchBudget{remaining: limit}
+	}
+	b.remaining = limit
+	b.trip = false
+	return b
+}
+
 // charge consumes one enumeration step. It returns true while budget remains
 // and false once exhausted (latching trip). A nil budget always returns true.
 func (b *queryMatchBudget) charge() bool {

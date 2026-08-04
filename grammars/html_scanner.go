@@ -2,7 +2,28 @@
 
 package grammars
 
-import gotreesitter "github.com/odvcencio/gotreesitter"
+import (
+	"sync"
+
+	gotreesitter "github.com/odvcencio/gotreesitter"
+)
+
+// htmlLangOnce caches the HTML *Language pointer for the process lifetime.
+// HTMLExternalScanner.Scan runs per external token and previously called
+// HtmlLanguage() (→ loadEmbeddedLanguage → getEmbeddedLanguageCacheEntry, a
+// global-mutex lookup, plus an env-lock via the blob-override probe) on every
+// token purely to index the immutable ExternalSymbols table. The blob is
+// embedded and its ExternalSymbols never change after load, so one lock-free
+// cached pointer is exactly the fix already shipped for the scss/yaml scanners.
+var (
+	htmlLangOnce   sync.Once
+	htmlLangCached *gotreesitter.Language
+)
+
+func htmlCachedLang() *gotreesitter.Language {
+	htmlLangOnce.Do(func() { htmlLangCached = HtmlLanguage() })
+	return htmlLangCached
+}
 
 // External token indexes for the HTML grammar.
 // These must match the order in the grammar's externals array.
@@ -62,7 +83,7 @@ func (HTMLExternalScanner) PreservesStateOnScanFailure() bool { return true }
 func (HTMLExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer, validSymbols []bool) bool {
 	s := payload.(*htmlScannerState)
 	lx := &goLexerAdapter{lexer}
-	lang := HtmlLanguage()
+	lang := htmlCachedLang()
 
 	// Resolve concrete symbol IDs from the grammar's ExternalSymbols table.
 	startSym := lang.ExternalSymbols[htmlTokStartTagName]

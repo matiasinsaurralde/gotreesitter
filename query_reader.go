@@ -65,6 +65,10 @@ func executeQueryWithReader[N comparable, C any, R queryNodeReader[N, C]](q *Que
 		q.buildRootPatternIndex()
 	}
 	worklist = append(worklist, queryReaderWorkItem[N]{node: root, childIdx: -1})
+	// One reusable match budget for this whole reader invocation. Attempts run
+	// strictly sequentially here, so resetQueryMatchBudget before each attempt is
+	// equivalent to a fresh allocation but avoids the per-attempt heap alloc.
+	var budget *queryMatchBudget
 	for len(worklist) > 0 {
 		last := len(worklist) - 1
 		item := worklist[last]
@@ -81,7 +85,7 @@ func executeQueryWithReader[N comparable, C any, R queryNodeReader[N, C]](q *Que
 					continue
 				}
 				pattern := &q.patterns[patternIndex]
-				budget := newQueryMatchBudget(defaultQueryMatchWorkBudget)
+				budget = resetQueryMatchBudget(budget, defaultQueryMatchWorkBudget)
 				var captureSets [][]C
 				if pattern.steps[0].quantifier == queryQuantifierZeroOrMore || pattern.steps[0].quantifier == queryQuantifierOneOrMore {
 					captureSets = matchPatternPostorderAllWithReader(q, pattern, node, item.parent, item.childIdx, lang, source, budget, reader)
@@ -108,7 +112,8 @@ func executeQueryWithReader[N comparable, C any, R queryNodeReader[N, C]](q *Que
 				continue
 			}
 			pattern := &q.patterns[patternIndex]
-			captures := matchPatternAllWithReader(q, pattern, node, lang, source, newQueryMatchBudget(defaultQueryMatchWorkBudget), reader)
+			budget = resetQueryMatchBudget(budget, defaultQueryMatchWorkBudget)
+			captures := matchPatternAllWithReader(q, pattern, node, lang, source, budget, reader)
 			for _, set := range captures {
 				dst = append(dst, queryReaderMatch[C]{PatternIndex: patternIndex, Captures: set})
 			}

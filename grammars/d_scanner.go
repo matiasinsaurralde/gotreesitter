@@ -3,10 +3,28 @@
 package grammars
 
 import (
+	"sync"
 	"unicode"
 
 	gotreesitter "github.com/odvcencio/gotreesitter"
 )
+
+// dLangCached caches the D *Language for the process lifetime. DExternalScanner
+// is stateless (Create returns nil, ExternalScannerIsStateless()==true), so the
+// cache MUST be package-level rather than a per-payload field — giving the
+// scanner a payload would break its stateless/quiescence contract used for
+// incremental reuse. Scan runs per external token and previously re-fetched the
+// language (a global-mutex cache lookup) on every token only to index the
+// immutable ExternalSymbols table.
+var (
+	dLangOnce   sync.Once
+	dLangCached *gotreesitter.Language
+)
+
+func dCachedLang() *gotreesitter.Language {
+	dLangOnce.Do(func() { dLangCached = DLanguage() })
+	return dLangCached
+}
 
 // External token indexes for the D grammar (must match grammar.js externals).
 const (
@@ -37,7 +55,7 @@ func (DExternalScanner) ExternalScannerIsStateless() bool  { return true }
 func (DExternalScanner) PreservesStateOnScanFailure() bool { return true }
 
 func (DExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer, validSymbols []bool) bool {
-	lang := DLanguage()
+	lang := dCachedLang()
 	c := lexer.Lookahead()
 	startOfLine := lexer.Column() == 0
 

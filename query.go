@@ -272,6 +272,11 @@ type QueryCursor struct {
 	didExceedMatchLim bool
 
 	workBudget int
+	// matchBudget is reused across (pattern,node) attempts and reset before each
+	// via resetQueryMatchBudget, avoiding a per-attempt heap allocation. It lives
+	// on the cursor (per-goroutine by the QueryCursor contract), never on the
+	// shared Query, so concurrent Execute calls cannot race on it.
+	matchBudget *queryMatchBudget
 
 	hasMaxStartDepth bool
 	maxStartDepth    uint32
@@ -874,7 +879,8 @@ func (c *QueryCursor) nextMatchRaw() (QueryMatch, bool) {
 					return match, true
 				}
 			}
-			budget := newQueryMatchBudget(c.workBudget)
+			c.matchBudget = resetQueryMatchBudget(c.matchBudget, c.workBudget)
+			budget := c.matchBudget
 			var captureSets [][]QueryCapture
 			if c.currentNodePost {
 				if pat.steps[0].quantifier == queryQuantifierZeroOrMore || pat.steps[0].quantifier == queryQuantifierOneOrMore {

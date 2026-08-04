@@ -233,9 +233,16 @@ type glrMergeScratch struct {
 	cleanZeroEpoch   uint32
 	cleanZeroScan    uint32
 	cleanZeroCache   map[*gssNode]gssCleanZeroErrorCacheEntry
-	cleanZeroFront   []glrCleanZeroFrontCacheEntry
-	cleanZeroBytes   int64
-	cleanZeroFrames  []gssCleanZeroFrame
+	// offsetSeen is the reusable cycle-guard for gssNodeUniformByteOffset walks
+	// in gssNodesCanMergeWithScratch. Both walks of a single canMerge complete
+	// before any re-entrant merge, so one cleared map serves both — mirroring
+	// gssMainPreflight.acquireOffsetSeen. Previously each canMerge allocated two
+	// fresh maps per link-pair; the sibling gssNodeCanReach was de-allocated for
+	// exactly this reason (see its comment) but this walk was missed.
+	offsetSeen      map[*gssNode]bool
+	cleanZeroFront  []glrCleanZeroFrontCacheEntry
+	cleanZeroBytes  int64
+	cleanZeroFrames []gssCleanZeroFrame
 	// childErrors points at parseInternal's sticky proof for fresh full parses.
 	// false means no ERROR, MISSING, or has-error payload has been constructed
 	// anywhere in this parse, so every GSS path has zero subtree error cost and
@@ -1164,6 +1171,10 @@ func (s *glrMergeScratch) invalidateGSSPointersForReuse() {
 	resetGSSPrefixPath(&s.cPrefixPath)
 	if len(s.cleanZeroCache) > 0 {
 		clear(s.cleanZeroCache)
+	}
+	if len(s.offsetSeen) > 0 {
+		// Drop stale *gssNode keys so a pooled scratch cannot pin GSS slabs.
+		clear(s.offsetSeen)
 	}
 	if cap(s.cleanZeroFrames) > 0 {
 		clear(s.cleanZeroFrames[:cap(s.cleanZeroFrames)])
@@ -3373,9 +3384,29 @@ func gssNodesCanMergeWithScratch(scratch *glrMergeScratch, a, b *gssNode) bool {
 		!gssNodeCleanZeroErrorAllLinksWithScratch(scratch, b) {
 		return false
 	}
-	aOffset, aOK := gssNodeUniformByteOffset(a, make(map[*gssNode]bool))
-	bOffset, bOK := gssNodeUniformByteOffset(b, make(map[*gssNode]bool))
+	aOffset, aOK := gssNodeUniformByteOffset(a, scratch.acquireOffsetSeen())
+	bOffset, bOK := gssNodeUniformByteOffset(b, scratch.acquireOffsetSeen())
 	return aOK && bOK && aOffset == bOffset
+}
+
+// acquireOffsetSeen returns a cleared, reusable cycle-guard map for one
+// gssNodeUniformByteOffset walk. It mirrors gssMainPreflight.acquireOffsetSeen:
+// a canMerge's two walks run sequentially (walk a fully completes, then the
+// second call clears and returns the same map for walk b), and neither walk
+// re-enters merge logic (gssLinkByteOffset only recurses back into
+// gssNodeUniformByteOffset), so a single scratch-owned map is safe. A nil
+// scratch (only the test-only gssNodesCanMerge wrapper) falls back to a fresh
+// map, preserving the old behavior on that cold path.
+func (s *glrMergeScratch) acquireOffsetSeen() map[*gssNode]bool {
+	if s == nil {
+		return make(map[*gssNode]bool, 16)
+	}
+	if s.offsetSeen == nil {
+		s.offsetSeen = make(map[*gssNode]bool, 16)
+	} else if len(s.offsetSeen) > 0 {
+		clear(s.offsetSeen)
+	}
+	return s.offsetSeen
 }
 
 func gssNodeCanReach(from, target *gssNode) bool {
