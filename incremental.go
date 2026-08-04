@@ -13,11 +13,17 @@ type reuseCursor struct {
 	sourceLen uint32
 	oldSource []byte
 	newSource []byte
-	// wholeSourceIdentical is computed once at reset. Dirty-candidate checks can
-	// be numerous, so they must not rescan the complete buffer per candidate.
-	wholeSourceIdentical bool
-	minEditAt            uint32
-	hasEdits             bool
+	// wholeSourceIdentical is computed LAZILY on the first sourceBytesIdentical()
+	// call and memoized (wholeSourceIdenticalComputed). Its only consumers are the
+	// dirty-bit-clear checks and the full-root-undo gate, which fire only on dirty
+	// candidates / the undo path — so a reparse that never reaches one (the common
+	// case, e.g. a same-length edit that early-outs) pays nothing instead of an
+	// eager whole-buffer bytes.Equal every reset. Single-goroutine per parse (under
+	// reuseMu), so a plain bool memo is sufficient.
+	wholeSourceIdentical         bool
+	wholeSourceIdenticalComputed bool
+	minEditAt                    uint32
+	hasEdits                     bool
 	// edits is the old tree's recorded edit list (post-parse Tree.Edit calls),
 	// in application order. It is needed to reverse-map a node's post-edit
 	// (shifted) byte coordinates back to its pre-edit coordinates in oldSource
@@ -101,7 +107,11 @@ func (c *reuseCursor) reset(oldTree *Tree, source []byte, scratch *reuseScratch)
 	c.sourceLen = uint32(len(source))
 	c.oldSource = oldTree.source
 	c.newSource = source
-	c.wholeSourceIdentical = bytes.Equal(c.oldSource, c.newSource)
+	// Lazy: do NOT compute the whole-buffer compare here. Invalidate the memo so
+	// this parse recomputes it only if a consumer actually asks. The cursor is a
+	// pooled Parser field reused across parses, so resetting the flag is mandatory
+	// — a stale verdict from the previous parse would corrupt dirty-clearing.
+	c.wholeSourceIdenticalComputed = false
 	c.minEditAt = 0
 	c.hasEdits = len(oldTree.edits) > 0
 	c.edits = oldTree.edits
@@ -566,6 +576,15 @@ func (c *reuseCursor) nodeBytesUnchanged(start, end uint32) bool {
 	if end > uint32(len(c.newSource)) {
 		return false
 	}
+	// NOTE: a tempting "single-edit positional" fast path (span before StartByte
+	// or at/after NewEndByte ⇒ unchanged without comparing) was evaluated and
+	// REJECTED: it trusts the declared edit to bound every change, but this reuse
+	// guard intentionally defends against INACCURATE/degenerate edits (e.g. an
+	// {StartByte:0} zero-width edit with the real change one byte later — see
+	// TestReuseCursorTopLevelRejectsChangedFinalRefWithoutMaterialization). Only a
+	// real byte comparison catches those, so the compare below stays. (The eager
+	// whole-buffer scan that used to run every reset was still removed — see the
+	// lazy sourceBytesIdentical memo.)
 	oldStart, ok1 := c.oldByteForNew(start)
 	oldEnd, ok2 := c.oldByteForNew(end)
 	if !ok1 || !ok2 || oldEnd < oldStart {
@@ -581,7 +600,14 @@ func (c *reuseCursor) nodeBytesUnchanged(start, end uint32) bool {
 // retains the edit+inverse undo optimization without transferring ownership of
 // a genuine edit back to incremental reuse.
 func (c *reuseCursor) sourceBytesIdentical() bool {
-	return c != nil && c.wholeSourceIdentical
+	if c == nil {
+		return false
+	}
+	if !c.wholeSourceIdenticalComputed {
+		c.wholeSourceIdentical = bytes.Equal(c.oldSource, c.newSource)
+		c.wholeSourceIdenticalComputed = true
+	}
+	return c.wholeSourceIdentical
 }
 
 func reuseSubtreeGapIsParserPadding(source []byte, stackByteOffset, nodeStart uint32) bool {
@@ -621,10 +647,17 @@ func (p *Parser) tryReuseSubtree(s *glrStack, lookahead Token, ts TokenSource, i
 	state := s.top().state
 	for _, n := range candidates {
 		if n.ChildCount() > 0 {
-			// Preserve full-root reuse on undo when bytes are identical.
+			// Preserve full-root reuse on undo when bytes are identical. Use the
+			// whole-source compare directly: for the whole-root span [0,sourceLen]
+			// this is exactly equivalent to the old nodeBytesUnchanged(0,sourceLen)
+			// (which reduced to bytes.Equal(oldSource,newSource)), and it is the
+			// load-bearing correctness gate here since this is the one reuse path
+			// with no dirty backstop. The single-edit fast path added to
+			// nodeBytesUnchanged deliberately reports the whole-root span as
+			// "changed", so it must NOT be used for this undo check.
 			fullRootUndo := n.startByte == 0 &&
 				n.endByte == idx.sourceLen &&
-				idx.nodeBytesUnchanged(n.startByte, n.endByte)
+				idx.sourceBytesIdentical()
 			if !fullRootUndo && !idx.topLevelSiblingBlockSpliceEligible(n) {
 				idx.rejectRootNonLeafChanged++
 				continue

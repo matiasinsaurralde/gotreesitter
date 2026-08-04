@@ -16,14 +16,27 @@ de-allocated in one function but not its neighbour, a value hoisted in the GSS r
 recomputed in the non-GSS one. The fixes are therefore mostly mechanical: **restore the
 established in-tree pattern to the site that was missed.**
 
-Status legend: 🔬 candidate · ✅ verified (analysis) · 🛠️ fix applied, builds & targeted tests pass · ❌ rejected
+Status legend: 🔬 candidate · ✅ verified (analysis) · 🛠️ fix applied, builds & targeted tests pass ·
+⚠️ partial (safe part applied, unsafe part rejected) · ❌ rejected
 
 **Applied so far (branch `claude/hello-iufgo8`), each adversarially verified then built + targeted-tested:**
-D1 (JSON zero-copy), C1 (html/sql/d scanner lang cache — *scoped down* from 6 to 3 after
-verification found cobol/blade/just already cache), C3 (WalkAndParse atomics), A1 (GSS merge map
-reuse), E1 (query budget reuse). Adversarial verification notably **corrected** two findings:
-C1's scope (6→3 scanners) and E1's reset (must clear `trip` as well as `remaining`). E2 was
-deferred by verification as a correctness-critical backtracking rewrite, not a mechanical swap.
+D1 (JSON zero-copy), C1 (html/sql/d scanner lang cache), C3 (WalkAndParse atomics), A1 (GSS merge
+map reuse), E1 (query budget reuse), B1 (arena NoClear field slices), A6 (reduce value hoist),
+C2 (grammar-cache RWMutex read path), F2 (lazy whole-source compare), F1-partial (`fullRootUndo`
+now uses the memoized whole-source compare).
+
+**Adversarial verification changed the outcome on four findings — the process earned its keep:**
+- **C1** scope corrected 6→3 scanners (cobol/blade/just already cache via `sync.Once`).
+- **E1** reset corrected to clear `trip` as well as `remaining` (a partial reset would silently
+  drop matches).
+- **E2** (clone-per-step → checkpoint/rollback) deferred: a correctness-critical backtracking
+  rewrite with a silent-wrong-captures failure mode, not a mechanical swap. Gate on the cgo parity harness.
+- **F1** positional fast path **rejected**: it trusts the declared edit to bound every change, but
+  the reuse guard deliberately defends against *inaccurate* edits (a `{StartByte:0}` edit whose real
+  change is one byte later — `TestReuseCursorTopLevelRejectsChangedFinalRefWithoutMaterialization`
+  fails with the shortcut). Only a real `bytes.Equal` catches those. The eager whole-buffer scan it
+  ran every reset was still removed via F2's lazy memo; the descendant-skip propagation the finding
+  also proposed is deferred (safe but invasive, gate on the incremental differential suites).
 
 ---
 
@@ -33,12 +46,12 @@ deferred by verification as a correctness-critical backtracking rewrite, not a m
 |---|------|----------|----------|--------|--------|
 | **D1** | JSON lexer | `grammars/json_lexer.go` ×8 | zero-copy conversion | **High** | 🛠️ |
 | **C1** | External scanners | `html/sql/d/cobol/blade/just` scanners | per-token lock + env-lock | **High** | 🛠️ |
-| **F1** | Incremental reuse | `incremental.go:562` | O(bytes×depth) recompare | **High** | ✅ |
+| **F1** | Incremental reuse | `incremental.go:562` | O(bytes×depth) recompare | **High** | ⚠️ partial |
 | **A1** | GSS merge | `glr.go:3376` | per-call map alloc (GB-scale) | **Med-High** | 🛠️ |
 | **B1** | Arena alloc | `arena.go:1560/1598` + reduce path | dead memclr / missing NoClear | **Med-High** | 🛠️ |
 | **E1** | Query match | `query_reader.go:84`, `query.go:877` | per-attempt heap alloc | **Med-High** | 🛠️ |
 | **C2** | Grammar cache | `embedded_loader.go:185` | global mutex, no fast path | **Med-High** | 🛠️ |
-| **F2** | Incremental reset | `incremental.go:104` | eager whole-buffer Equal | **Med-High** | ✅ |
+| **F2** | Incremental reset | `incremental.go:104` | eager whole-buffer Equal | **Med-High** | 🛠️ |
 | **E2** | Query match | `query_matcher_generic.go:179` | clone-per-step captures | Med-High | 🔬 |
 | **A2** | GSS merge | `glr.go:3366/4171` | uncached reachability re-walk | Med | 🔬 |
 | **B3=C4** | Arena pool | `arena.go:313` | pool-size cliff under concurrency | Med | ✅ (2 agents) |
