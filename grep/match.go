@@ -180,7 +180,16 @@ func convertMatch(qm gotreesitter.QueryMatch, source []byte, capToMeta map[strin
 			continue
 		}
 
-		captureText := []byte(qc.Text(source))
+		// One alloc+copy instead of two: qc.Text() would build a string
+		// (string(source[sb:eb])) that we then re-copy into a []byte. Slice the
+		// source directly (copying so Capture.Text may outlive source), and only
+		// fall back to the string path when a TextOverride is in effect.
+		var captureText []byte
+		if qc.TextOverride != "" {
+			captureText = []byte(qc.TextOverride)
+		} else {
+			captureText = append([]byte(nil), source[sb:eb]...)
+		}
 		r.Captures[name] = Capture{
 			Name:      name,
 			Text:      captureText,

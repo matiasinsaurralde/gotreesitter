@@ -1,6 +1,7 @@
 package grep
 
 import (
+	"bytes"
 	"fmt"
 	"regexp"
 	"strings"
@@ -97,9 +98,9 @@ func compileContains(clause string, negated bool) (WhereFilter, error) {
 		return nil, err
 	}
 
+	argBytes := []byte(arg)
 	return func(result *Result, source []byte, lang *gotreesitter.Language) bool {
-		text := captureText(result, capName, source)
-		found := strings.Contains(text, arg)
+		found := bytes.Contains(captureBytes(result, capName, source), argBytes)
 		if negated {
 			return !found
 		}
@@ -120,8 +121,7 @@ func compileMatches(clause string, negated bool) (WhereFilter, error) {
 	}
 
 	return func(result *Result, source []byte, lang *gotreesitter.Language) bool {
-		text := captureText(result, capName, source)
-		matched := re.MatchString(text)
+		matched := re.Match(captureBytes(result, capName, source))
 		if negated {
 			return !matched
 		}
@@ -177,21 +177,22 @@ func stripQuotes(s string) string {
 	return s
 }
 
-// captureText returns the text of a named capture from a Result.
-// It first checks the Captures map; if the capture has Text set, it uses that.
-// Otherwise it falls back to extracting from source using byte offsets.
-// Returns empty string if the capture is not found.
-func captureText(result *Result, capName string, source []byte) string {
+// captureBytes returns the text of a named capture as bytes, without any
+// allocation: it aliases the capture's already-materialized Text (or the source
+// sub-slice). The where-filter callers only read the result (bytes.Contains /
+// Regexp.Match), so aliasing is safe and avoids the per-result string copy the
+// old captureText helper paid.
+func captureBytes(result *Result, capName string, source []byte) []byte {
 	cap, ok := result.Captures[capName]
 	if !ok {
-		return ""
+		return nil
 	}
 	if len(cap.Text) > 0 {
-		return string(cap.Text)
+		return cap.Text
 	}
 	// Fallback to source bytes.
 	if int(cap.EndByte) <= len(source) {
-		return string(source[cap.StartByte:cap.EndByte])
+		return source[cap.StartByte:cap.EndByte]
 	}
-	return ""
+	return nil
 }

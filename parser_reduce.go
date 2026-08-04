@@ -8819,7 +8819,12 @@ func cloneNodeInArena(arena *nodeArena, n *Node) *Node {
 	if nodeHasFinalChildRefs(n) {
 		childCount := nodeChildCountNoMaterialize(n)
 		if childCount > 0 {
-			children := arena.allocNodeSlice(childCount)
+			// NoClear: the loop below writes every one of the childCount slots, so
+			// the allocator memclr would be immediately overwritten. (Hot: this
+			// clone helper has ~60 normalization callers.) The sibling
+			// materializeHiddenNodeForAlias below deliberately keeps the clearing
+			// allocator because appendFlattenedHiddenChildrenWithFields partial-fills.
+			children := arena.allocNodeSliceNoClear(childCount)
 			for i := 0; i < childCount; i++ {
 				children[i] = nodeChildAtForReason(n, i, materializeForNormalization)
 			}

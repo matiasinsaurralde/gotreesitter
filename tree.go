@@ -1630,8 +1630,12 @@ func (n *Node) ChildByFieldName(name string, lang *Language) *Node {
 	}
 
 	childCount := nodeChildCountNoMaterialize(n)
+	// Hoist the fieldIDs header out of the loop; nodeFieldIDAt re-derived it per
+	// child. fid != 0 here, and an out-of-range index has no field, so the bounds
+	// check + direct index is equivalent to the per-call nodeFieldIDAt.
+	fieldIDs := n.fieldIDs()
 	for i := 0; i < childCount; i++ {
-		if nodeFieldIDAt(n, i) == fid {
+		if i < len(fieldIDs) && fieldIDs[i] == fid {
 			return nodeChildAtForReason(n, i, materializeForParentAPI)
 		}
 	}
@@ -3404,7 +3408,7 @@ func cloneFieldIDsIntoArena(arena *nodeArena, src []FieldID) []FieldID {
 	if len(src) == 0 {
 		return []FieldID{}
 	}
-	dst := arena.allocFieldIDSlice(len(src))
+	dst := arena.allocFieldIDSliceNoClear(len(src)) // copy below fills all len(src) elements
 	copy(dst, src)
 	return dst
 }
@@ -3416,7 +3420,7 @@ func cloneFieldSourcesIntoArena(arena *nodeArena, src []uint8) []uint8 {
 	if len(src) == 0 {
 		return []uint8{}
 	}
-	dst := arena.allocFieldSourceSlice(len(src))
+	dst := arena.allocFieldSourceSliceNoClear(len(src)) // copy below fills all len(src) elements
 	copy(dst, src)
 	return dst
 }

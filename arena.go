@@ -1,6 +1,7 @@
 package gotreesitter
 
 import (
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"unsafe"
@@ -313,13 +314,23 @@ type externalScannerCheckpointSlab struct {
 var (
 	arenaBreakdownEnabled atomic.Bool
 
+	// Pool retention scales with parse parallelism. WalkAndParse sizes its worker
+	// pool at GOMAXPROCS (grammars/gateway.go), so with the old fixed maxSize the
+	// 5th+ concurrent parse on a >4-core box got ZERO arena reuse — a fresh
+	// ~2.7MB full arena allocated and GC'd per parse. Size to GOMAXPROCS so each
+	// steady-state worker keeps a warm arena, with floors preserving the previous
+	// small-box behavior and ceilings bounding worst-case retention (each pooled
+	// full arena is capped at maxRetainedFullArenaBytes by Release()'s eviction
+	// guard, which is untouched). maxSize is a pure retention count — reset()
+	// already clears every arena entering the pool, so raising it adds no new
+	// reuse obligation.
 	incrementalArenaPool = nodeArenaPool{
 		class:   arenaClassIncremental,
-		maxSize: 8,
+		maxSize: max(8, min(runtime.GOMAXPROCS(0), 32)),
 	}
 	fullArenaPool = nodeArenaPool{
 		class:   arenaClassFull,
-		maxSize: 4,
+		maxSize: max(4, min(runtime.GOMAXPROCS(0), 16)),
 	}
 )
 
