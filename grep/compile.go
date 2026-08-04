@@ -3,6 +3,7 @@ package grep
 import (
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/odvcencio/gotreesitter"
 	"github.com/odvcencio/gotreesitter/grammars"
@@ -115,17 +116,38 @@ func CompilePatternForLang(langName, pattern string) (*CompiledPattern, error) {
 	return CompilePattern(entry.Language(), pattern)
 }
 
-// parseSnippet parses a code snippet using the correct method for the
-// language, including token source factories where needed.
-func parseSnippet(lang *gotreesitter.Language, source []byte) (*gotreesitter.Tree, error) {
-	// Find the LangEntry to check for a TokenSourceFactory.
-	var entry *grammars.LangEntry
+// langEntryByLanguage caches the *Language -> *LangEntry resolution so that
+// parseSnippet does not copy the whole 206-entry registry (grammars.AllLanguages
+// allocates a full slice copy) and force-load grammars on every call. The first
+// lookup for a given language scans once; all later parses of that language are
+// an O(1) map hit. A stored nil means "no matching entry" (still cached, so the
+// miss is not re-scanned).
+var langEntryByLanguage sync.Map // map[*gotreesitter.Language]*grammars.LangEntry
+
+func resolveLangEntry(lang *gotreesitter.Language) *grammars.LangEntry {
+	if lang == nil {
+		return nil
+	}
+	if v, ok := langEntryByLanguage.Load(lang); ok {
+		return v.(*grammars.LangEntry)
+	}
+	var found *grammars.LangEntry
 	for _, e := range grammars.AllLanguages() {
 		if e.Language() == lang {
-			entry = &e
+			e := e // capture a stable copy; &e of the range var would alias the loop slot
+			found = &e
 			break
 		}
 	}
+	langEntryByLanguage.Store(lang, found)
+	return found
+}
+
+// parseSnippet parses a code snippet using the correct method for the
+// language, including token source factories where needed.
+func parseSnippet(lang *gotreesitter.Language, source []byte) (*gotreesitter.Tree, error) {
+	// Find the LangEntry to check for a TokenSourceFactory (cached per language).
+	entry := resolveLangEntry(lang)
 
 	parser := gotreesitter.NewParser(lang)
 

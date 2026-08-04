@@ -52,19 +52,19 @@ now uses the memoized whole-source compare).
 | **E1** | Query match | `query_reader.go:84`, `query.go:877` | per-attempt heap alloc | **Med-High** | 🛠️ |
 | **C2** | Grammar cache | `embedded_loader.go:185` | global mutex, no fast path | **Med-High** | 🛠️ |
 | **F2** | Incremental reset | `incremental.go:104` | eager whole-buffer Equal | **Med-High** | 🛠️ |
-| **E2** | Query match | `query_matcher_generic.go:179` | clone-per-step captures | Med-High | 🔬 |
-| **A2** | GSS merge | `glr.go:3366/4171` | uncached reachability re-walk | Med | 🔬 |
-| **B3=C4** | Arena pool | `arena.go:313` | pool-size cliff under concurrency | Med | ✅ (2 agents) |
+| **E2** | Query match | `query_matcher_generic.go:179` | clone-per-step captures | Med-High | ⏸ defer |
+| **A2** | GSS merge | `glr.go:3366/4171` | uncached reachability re-walk | Med | ❌ rej |
+| **B3=C4** | Arena pool | `arena.go:313` | pool-size cliff under concurrency | Med | 🛠️ |
 | **C3** | Batch parse | `grammars/gateway.go:216` | mutex where atomics suffice | Med | 🛠️ |
 | **B2** | Reduce scratch | `parser_reduce.go:5927` | per-reduce clear only GC-useful | Med | 🔬 |
 | **F3** | DFA lexer | `parser_dfa_token_source.go:4506` | contextual-keyword re-scan | Med | 🔬 |
 | **F4** | External scan | `parser_dfa_token_source.go:3672` | winning-ELS scanned twice | Med | 🔬 |
-| **D4** | grep rewrite | `grep/rewrite.go:208` | O(edits×N) buffer rebuild | Med | 🔬 |
+| **D4** | grep rewrite | `grep/rewrite.go:208` | O(edits×N) buffer rebuild | Med | 🔬 rec |
 | **E3** | Query index | `query.go:602` | per-node candidate merge alloc | Med | 🔬 |
 | **E5** | Query predicate | `query_matcher_generic.go:181` | per-step capture-text realloc | Med | 🔬 |
 | **E4** | Query anchors | `query_matcher.go:385` | named-pos rebuild w/o anchors | Med | 🔬 |
-| **D2** | grep match | `grep/match.go:183` | double text conversion | Med | 🔬 |
-| **D3** | grep where | `grep/where.go:100` | []byte→string per result | Med | 🔬 |
+| **D2** | grep match | `grep/match.go:183` | double text conversion | Med | 🛠️ |
+| **D3** | grep where | `grep/where.go:100` | []byte→string per result | Med | 🛠️ |
 | **A3** | Stack cull | `parser.go:8461` | O(keep×n) + O(m²) sorts | Med-Low | 🔬 |
 | **A6** | Reduce | `parser_reduce.go:7276` | value recomputed 3×/reduce | Low (0-risk) | 🛠️ |
 | **B4** | Arena reset | `arena.go:897` | 126 discrete stores/reset | Low-Med | 🔬 |
@@ -225,6 +225,52 @@ now uses the memoized whole-source compare).
 - **F5** add an `IsQuiescent()`/`SerializedLen()` fast path instead of a 4 KB serialize-to-measure.
 - **A5** resolve a `stackEntry` payload base once per operand instead of ~12×.
 - **C5** shard the phase0a diagnostic observer per-`*Core` (non-production build only).
+
+---
+
+
+---
+
+## Wave 2 findings (redirect + partial-regression hunt)
+
+New approach families explored in round 2: grammar-load/serialization, tree/cursor traversal,
+the grep + peripheral packages, and a systematic partial-regression hunt.
+
+| # | Area | Location | Category | Impact | Status |
+|---|------|----------|----------|--------|--------|
+| **P1-1** | grep parse | `grep/compile.go:120` | 206-entry registry copy + force-load per parse | High | 🛠️ |
+| **S1** | parser setup | `parser.go:1484` | ~28 Language-derived tables rebuilt per `NewParser` | High | 🔬 rec |
+| **N2** | node access | `tree.go:1779` | `DescendantForByteRange` linear per level (cursor binary-searches) | High | 🔬 rec |
+| **N1** | node access | `tree.go:1604` | `NamedChild(i)` O(n²) iteration | High | 🔬 rec |
+| **S3** | grammar load | `load_language.go:90` | gzip stream copied twice (~308MB/Swift) | Med-High | 🔬 rec |
+| **PR-2** | arena clone | `parser_reduce.go:8822`, `tree.go:3407` | `NoClear` siblings B1 missed (cloneNodeInArena, field clones) | Med | 🛠️ |
+| **P1-2** | grep replace | `grep/query.go:158` | source parsed twice in replace pipeline | Med-High | 🔬 rec |
+| **P1-3** | grep rewrite | `grep/rewrite.go:208` | `ApplyEdits` O(edits×N) | Med | 🔬 rec |
+| **S4** | grammar load | `grammars/embedded_loader.go:812` | `repairNoLookaheadLexModes` re-probes small table | Med | 🔬 rec |
+| **S5** | grammar load | `grammars/language_compact.go:42` | per-string global-mutex interning | Med | 🔬 rec |
+| **N3** | node access | `tree.go:523` | sidecar/refs re-resolved per child in scan loops | Med | 🔬 rec |
+| **N4** | node access | `tree.go:583` | single-child materialize never graduates to flat slice | Med | 🔬 rec |
+| **P1-5** | grep rewrite | `grep/rewrite.go:262` | template re-tokenized 2K×/match | Med | 🔬 rec |
+| **N5** | node access | `tree.go:1626` | `ChildByFieldName` re-derives fieldIDs header | Low | 🛠️ |
+| **S6** | grammar load | `grammars/embedded_loader.go:536` | full-blob SHA-256 computed then discarded (~200 langs) | Low-Med | 🔬 rec |
+| **P1-7** | grep match | `grep/match.go:129` | `buildCaptureMap` identity map (dead work) | Low | 🔬 rec |
+| **P2-1..4** | tooling | `taproot`,`wasm`,`corpuscheck` | error-path / dev-tooling allocations | Low | 🔬 rec |
+
+## Rejected / corrected after adversarial verification
+
+- **A2** (GSS mutate-phase reach cache) — ❌ **unsafe**: the can-phase cache reflects a
+  virtual-link-augmented graph and caches `true` permanently; reused in the mutate phase it
+  refuses a merge the can-phase approved → dropped stack link / lost forest ambiguity = silent
+  parse corruption. Sound only as a dedicated per-mutation-epoch memo (marginal payoff) → defer.
+- **F1 positional fast path** — ❌ **rejected**: trusts the declared edit to bound every change,
+  but the reuse guard intentionally defends against inaccurate/degenerate edits
+  (`TestReuseCursorTopLevelRejectsChangedFinalRefWithoutMaterialization`). Only `bytes.Equal`
+  catches those. F2's lazy memo still removed the eager whole-buffer scan the finding targeted.
+- **PR-1** (lexer keyword `string()` → `bytesToStringNoCopy`) — ❌ **non-win**: `-gcflags=-m`
+  escape analysis shows all 9 sites "do not escape" — no heap allocation to remove.
+- **E2** (clone-per-step → checkpoint/rollback) — ⏸ **deferred**: real win but a
+  correctness-critical backtracking rewrite with a silent-wrong-captures failure mode; gate on
+  the cgo differential-parity harness.
 
 ---
 
